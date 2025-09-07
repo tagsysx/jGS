@@ -6,9 +6,11 @@ This tutorial introduces the fundamental concepts behind jGS and how Gaussian Sp
 1. [From Computer Graphics to RF](#from-computer-graphics-to-rf)
 2. [Complex-valued Fields](#complex-valued-fields)
 3. [Gaussian Primitives for RF](#gaussian-primitives-for-rf)
-4. [Mathematical Foundation](#mathematical-foundation)
-5. [Rendering Process](#rendering-process)
-6. [Optimization and Learning](#optimization-and-learning)
+4. [Data Storage and Memory Management](#data-storage-and-memory-management)
+5. [Mathematical Foundation](#mathematical-foundation)
+6. [Rendering Process](#rendering-process)
+7. [Optimization and Learning](#optimization-and-learning)
+8. [Performance Considerations](#performance-considerations)
 
 ## From Computer Graphics to RF
 
@@ -139,6 +141,166 @@ G(x) = A * exp(-½(x-μ)ᵀ Σ⁻¹ (x-μ))
 ```
 
 Where Σ is the covariance matrix derived from scale and rotation.
+
+## Data Storage and Memory Management
+
+### How Capacity is Stored
+
+The jGS system stores Gaussian primitive data in a highly optimized manner for both memory efficiency and computational performance:
+
+#### Parameter Storage Structure
+
+Each Gaussian primitive requires the following core parameters:
+
+```python
+# Per-primitive storage requirements:
+position_data = torch.float32  # 3 values × 4 bytes = 12 bytes
+complex_value = torch.complex64  # 1 complex × 8 bytes = 8 bytes
+scale_data = torch.float32     # 3 values × 4 bytes = 12 bytes
+rotation_data = torch.float32  # 4 quaternion × 4 bytes = 16 bytes
+# Total per primitive: 48 bytes
+
+# For N primitives: 48N bytes of core parameters
+```
+
+#### Tensor-based Storage
+
+The `ComplexGaussianSplatter` class stores all primitives in batched tensors for efficient GPU processing:
+
+```python
+class ComplexGaussianSplatter(nn.Module):
+    def __init__(self, positions, complex_values, scales, rotations, ...):
+        # Batch storage as PyTorch parameters (optimizable)
+        self._positions = nn.Parameter(positions)      # Shape: (N, 3)
+        self._complex_values = nn.Parameter(complex_values)  # Shape: (N,)
+        self._scales = nn.Parameter(scales)            # Shape: (N, 3)
+        self._rotations = nn.Parameter(rotations)      # Shape: (N, 4)
+        
+        # Derived data (computed on-demand)
+        self.primitives = []  # List of ComplexGaussianPrimitive objects
+```
+
+#### Memory Layout Optimization
+
+1. **Contiguous Memory**: All parameters are stored in contiguous GPU memory for optimal access patterns
+2. **Batch Processing**: Operations are vectorized across all primitives simultaneously
+3. **Lazy Computation**: Expensive derived quantities (covariance matrices) are computed only when needed
+
+```python
+# Example: Memory usage for 1000 primitives
+n_primitives = 1000
+core_memory = n_primitives * 48  # 48,000 bytes = 47 KB
+
+# Additional derived data (computed per primitive):
+rotation_matrix = 9 * 4  # 3x3 matrix = 36 bytes
+covariance_matrix = 9 * 4  # 3x3 matrix = 36 bytes
+inv_covariance = 9 * 4   # 3x3 matrix = 36 bytes
+det_covariance = 1 * 4   # scalar = 4 bytes
+# Derived per primitive: 112 bytes
+
+total_memory = core_memory + (n_primitives * 112)  # 160 KB total
+```
+
+### Capacity Scaling
+
+The system can handle varying numbers of primitives efficiently:
+
+```python
+# Small models (< 1K primitives): ~160 KB
+small_model = ComplexGaussianSplatter(
+    positions=torch.randn(500, 3),
+    complex_values=torch.randn(500, dtype=torch.complex64)
+)
+
+# Medium models (1K-10K primitives): ~1.6 MB
+medium_model = ComplexGaussianSplatter(
+    positions=torch.randn(5000, 3),
+    complex_values=torch.randn(5000, dtype=torch.complex64)
+)
+
+# Large models (10K-100K primitives): ~16 MB
+large_model = ComplexGaussianSplatter(
+    positions=torch.randn(50000, 3),
+    complex_values=torch.randn(50000, dtype=torch.complex64)
+)
+```
+
+### Dynamic Memory Management
+
+#### Adding/Removing Primitives
+
+```python
+# Adding primitives requires tensor reallocation
+def add_primitive(self, position, complex_value, scale=None, rotation=None):
+    """Add a new primitive to the model."""
+    # Create new tensors with increased capacity
+    new_positions = torch.cat([self._positions, position.unsqueeze(0)])
+    new_complex_values = torch.cat([self._complex_values, complex_value.unsqueeze(0)])
+    
+    # Update parameters (triggers reallocation)
+    self._positions = nn.Parameter(new_positions)
+    self._complex_values = nn.Parameter(new_complex_values)
+    
+    # Rebuild primitive list
+    self._update_primitives()
+```
+
+#### Memory-Efficient Updates
+
+```python
+# In-place parameter updates (no reallocation)
+model._positions[idx] = new_position  # Efficient
+model._complex_values[idx] = new_value  # Efficient
+
+# Batch updates for multiple primitives
+indices = torch.tensor([0, 5, 10])
+model._positions[indices] = new_positions  # Vectorized update
+```
+
+### Precomputed Data Caching
+
+For performance, each primitive caches expensive computations:
+
+```python
+class ComplexGaussianPrimitive:
+    def __init__(self, ...):
+        # Cache expensive matrix operations
+        self.rotation_matrix = self._quaternion_to_rotation_matrix(rotation)
+        self.covariance_matrix = self._compute_covariance_matrix()
+        self.inv_covariance = torch.inverse(self.covariance_matrix)
+        self.det_covariance = torch.det(self.covariance_matrix)
+    
+    def update_scale(self, new_scale):
+        """Update scale and recompute dependent matrices."""
+        self.scale = new_scale
+        # Recompute cached values
+        self.covariance_matrix = self._compute_covariance_matrix()
+        self.inv_covariance = torch.inverse(self.covariance_matrix)
+        self.det_covariance = torch.det(self.covariance_matrix)
+```
+
+### Serialization and Persistence
+
+The system supports efficient saving/loading of model state:
+
+```python
+# Save model state
+model.save_state('model_checkpoint.pth')
+
+# Primitive-level serialization
+primitive_dict = primitive.to_dict()
+# Returns:
+# {
+#     'position': numpy array (3,),
+#     'complex_value': complex numpy scalar,
+#     'scale': numpy array (3,),
+#     'rotation': numpy array (4,),
+#     'opacity': float
+# }
+
+# Restore from dictionary
+restored_primitive = ComplexGaussianPrimitive.from_dict(primitive_dict, device)
+```
 
 ## Mathematical Foundation
 
@@ -284,6 +446,108 @@ phase_loss = torch.mean(torch.angle(torch.exp(1j * phase_diff))**2)
 total_loss = mag_loss + phase_loss
 ```
 
+## Performance Considerations
+
+### Computational Complexity
+
+The rendering complexity scales as O(N×M) where:
+- N = number of Gaussian primitives
+- M = number of query points
+
+```python
+# Rendering performance analysis
+def analyze_performance(n_primitives, n_query_points):
+    """
+    Theoretical operations for field evaluation:
+    - Per primitive-point pair: ~50 FLOPs
+    - Total: N × M × 50 FLOPs
+    """
+    operations = n_primitives * n_query_points * 50
+    return operations
+
+# Examples:
+print(f"1K primitives, 1K points: {analyze_performance(1000, 1000):,} ops")
+print(f"10K primitives, 10K points: {analyze_performance(10000, 10000):,} ops")
+```
+
+### GPU Acceleration Benefits
+
+```python
+# CPU vs GPU performance comparison
+import time
+
+# CPU rendering
+model_cpu = ComplexGaussianSplatter(..., device='cpu')
+start = time.time()
+field_cpu = model_cpu.render(query_points)
+cpu_time = time.time() - start
+
+# GPU rendering
+model_gpu = ComplexGaussianSplatter(..., device='cuda')
+start = time.time()
+field_gpu = model_gpu.render(query_points.cuda())
+gpu_time = time.time() - start
+
+speedup = cpu_time / gpu_time
+print(f"GPU speedup: {speedup:.1f}x")
+```
+
+### Memory vs Accuracy Trade-offs
+
+```python
+# Adaptive primitive count based on field complexity
+def estimate_required_primitives(field_complexity, accuracy_target):
+    """
+    Rule of thumb: More complex fields need more primitives
+    - Simple fields (single source): 10-100 primitives
+    - Medium complexity (multiple sources): 100-1000 primitives  
+    - High complexity (interference patterns): 1000-10000 primitives
+    """
+    if field_complexity == 'simple':
+        return min(100, accuracy_target * 1000)
+    elif field_complexity == 'medium':
+        return min(1000, accuracy_target * 5000)
+    else:  # complex
+        return min(10000, accuracy_target * 20000)
+```
+
+### Batch Processing Strategies
+
+```python
+# Efficient batch rendering for large point clouds
+def render_large_pointcloud(model, points, batch_size=10000):
+    """Render field at many points using batching."""
+    n_points = points.shape[0]
+    results = []
+    
+    for i in range(0, n_points, batch_size):
+        batch_points = points[i:i+batch_size]
+        batch_result = model.render(batch_points)
+        results.append(batch_result)
+    
+    return torch.cat(results, dim=0)
+
+# Memory-efficient grid rendering
+def render_grid_efficient(model, grid_shape, bounds):
+    """Render on 3D grid without storing all points in memory."""
+    x_vals = torch.linspace(bounds[0][0], bounds[0][1], grid_shape[0])
+    y_vals = torch.linspace(bounds[1][0], bounds[1][1], grid_shape[1])
+    z_vals = torch.linspace(bounds[2][0], bounds[2][1], grid_shape[2])
+    
+    field_grid = torch.zeros(grid_shape, dtype=torch.complex64)
+    
+    # Process one z-slice at a time to save memory
+    for k, z in enumerate(z_vals):
+        X, Y = torch.meshgrid(x_vals, y_vals, indexing='ij')
+        Z = torch.full_like(X, z)
+        slice_points = torch.stack([X.flatten(), Y.flatten(), Z.flatten()], dim=1)
+        
+        slice_field = model.render(slice_points)
+        field_grid[:, :, k] = slice_field.reshape(grid_shape[0], grid_shape[1])
+    
+    return field_grid
+```
+
 ## Key Advantages
 
 1. **Continuous Representation**: Evaluate field anywhere in 3D space
@@ -291,6 +555,8 @@ total_loss = mag_loss + phase_loss
 3. **Compact**: Few parameters represent complex field distributions
 4. **Flexible**: Handles arbitrary measurement geometries
 5. **Physically Meaningful**: Preserves complex field properties
+6. **Scalable**: Efficient GPU acceleration for large models
+7. **Memory Efficient**: Optimized tensor storage and caching
 
 ## Limitations and Considerations
 
@@ -298,6 +564,8 @@ total_loss = mag_loss + phase_loss
 2. **Gaussian Basis**: May not capture sharp discontinuities well
 3. **Parameter Count**: Need sufficient Gaussians for complex fields
 4. **Local Minima**: Optimization may get stuck in poor solutions
+5. **Memory Scaling**: Large models (>100K primitives) require significant GPU memory
+6. **Computational Cost**: Rendering scales quadratically with primitives and query points
 
 ## Next Steps
 
