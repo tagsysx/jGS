@@ -28,14 +28,15 @@ Gaussian Splatting emerged as a revolutionary technique in computer graphics for
 
 **2. Mathematical Foundation**
 In optics, each Gaussian primitive contributes to the final image through:
-```math
-I = Σᵢ cᵢ · αᵢ · G(pixel, μᵢ, Σᵢ) · Tᵢ
-```
+
+$$I(p) = \sum_i c_i \cdot \alpha_i \cdot G(p, \mu_i, \Sigma_i) \cdot T_i$$
+
 Where:
 - `c_i` is RGB color (real-valued vector)
-- `αᵢ` is opacity (real scalar ∈ [0,1])
+- `α_i` is opacity (real scalar ∈ [0,1])
 - `G(·)` is the 2D projected Gaussian
-- `Tᵢ` is transmittance (accumulated opacity)
+- `T_i` is transmittance (accumulated opacity)
+- `p` is the pixel
 
 **3. Key Characteristics**
 - **Incoherent Summation**: Light intensities add directly (no phase relationships)
@@ -50,24 +51,24 @@ The transition from optical to RF domains necessitates fundamental changes due t
 #### 1. **Coherent vs Incoherent Phenomena**
 
 **Optical Domain (Incoherent)**:
-- Light from different sources adds in intensity: `I_total = I₁ + I₂ + I₃`
+- Light from different sources adds in intensity: $I_{total} = I_1 + I_2 + I_3$
 - No phase relationships between independent sources
 - Suitable for real-valued representation
 
 **RF Domain (Coherent)**:
-- Electromagnetic waves add as complex phasors: `E_total = E₁ + E₂ + E₃`
+- Electromagnetic waves add as complex phasors: $E_{total} = E_1 + E_2 + E_3$
 - Phase relationships critical for interference patterns
-- Requires complex-valued representation: `E = |E|e^(jφ)`
+- Requires complex-valued representation: $E = |E|e^{j\phi}$
 
 #### 2. **Physical Phenomena Requiring Complex Representation**
 
 **Multipath Propagation**:
 ```python
 # Direct path
-E_direct = A₁ * exp(j * k * d₁)
+E_direct = A_1 * exp(j * k * d_1)
 
 # Reflected path  
-E_reflected = A₂ * exp(j * k * d₂) * exp(j * π)  # 180° phase shift
+E_reflected = A_2 * exp(j * k * d_2) * exp(j * π)  # 180° phase shift
 
 # Total field (coherent superposition)
 E_total = E_direct + E_reflected
@@ -126,12 +127,12 @@ jGS addresses these challenges by extending Gaussian Splatting to the complex do
 
 #### Key Innovations
 
-**1. Complex Radiance**: `ψᵢ ∈ ℂ`
+**1. Complex Radiance**: `ψ_i ∈ ℂ`
 - Represents intrinsic electromagnetic field emission
 - Captures both magnitude and phase of sources
 - Enables modeling of coherent sources
 
-**2. Complex Attenuation**: `ρᵢ ∈ ℂ`  
+**2. Complex Attenuation**: `ρ_i ∈ ℂ`  
 - Models propagation effects through complex media
 - Handles both loss (real part) and phase shift (imaginary part)
 - Replaces simple opacity with physically meaningful attenuation
@@ -139,10 +140,10 @@ jGS addresses these challenges by extending Gaussian Splatting to the complex do
 **3. Coherent Field Summation**:
 ```python
 # Optical (incoherent)
-I_total = Σᵢ |cᵢ|² * αᵢ * G(x, μᵢ, Σᵢ)
+I_total = sum_i |c_i|^2 * α_i * G(x, μ_i, Σ_i)
 
 # RF (coherent)  
-E_total = Σᵢ ψᵢ * ρᵢ * G(x, μᵢ, Σᵢ) * exp(j*k*dᵢ)
+E_total = sum_i ψ_i * ρ_i * G(x, μ_i, Σ_i) * exp(j*k*d_i)
 ```
 
 **4. 3D Field Evaluation**:
@@ -180,64 +181,52 @@ The key adaptation extends real-valued radiation fields from optics to complex-v
 
 Each Gaussian i (i=1 to N) is defined by the following parameters, with the key innovation being the introduction of complex values to handle the coherent nature of wireless signals:
 
-#### Position Mean μᵢ ∈ ℝ³
+#### Position Mean μ_i ∈ ℝ³
 3D spatial position vector. Migrated from optical model, directly using original μ, but with relaxed parameterization to capture multipath:
 
-```
-μᵢ = Tᵢ · P_ref + Bᵢ
-```
+$$\mu_i = T_i \cdot P_{ref} + B_i$$
 
 Where:
-- Tᵢ is selection matrix (N × R, R is number of reference points like TX positions)
+- T_i is selection matrix (N × R, R is number of reference points like TX positions)
 - P_ref is reference positions
-- Bᵢ is bias term
+- $B_i$ is bias term
 - L1 regularization added to promote sparse paths
 
-#### Covariance Matrix Σᵢ ∈ ℝ³ˣ³
+#### Covariance Matrix Σ_i ∈ ℝ³ˣ³
 Defines shape, size, and orientation, ensuring positive semi-definite:
 
-```
-Σᵢ = Rᵢ Sᵢ SᵢᵀRᵢᵀ
-```
+$$\Sigma_i = R_i S_i S_i^T R_i^T$$
 
 Where:
-- Rᵢ is rotation matrix
-- Sᵢ is scaling matrix
+- R_i is rotation matrix
+- S_i is scaling matrix
 - Inherited from optics but initialization adjusted to reflect RF uncertainty (e.g., multipath spread)
 - No direct complex values, but frequency dependence considered during projection
 
-#### Complex Radiance/Emission ψᵢ ∈ ℂ
+#### Complex Radiance/Emission ψ_i ∈ ℂ
 Complex-valued signal strength, replacing optical real-valued color c:
 
-```
-ψᵢ = |ψᵢ| e^(j∠ψᵢ)
-```
+$$\psi_i = |\psi_i| e^{j\angle\psi_i}$$
 
 Where:
-- |ψᵢ| is amplitude
-- ∠ψᵢ is phase
+- |ψ_i| is amplitude
+- ∠ψ_i is phase
 
 Modeled by small MLP:
-```
-ψᵢ = f_Θ(μᵢ, P_TX, v̂ᵢ, f)
-```
+$$\psi_i = f_\Theta(\mu_i, P_{TX}, \hat{v}_i, f)$$
 
 Where:
-- v̂ᵢ is direction vector from Gaussian to RX
+- $\hat{v}_i$ is direction vector from Gaussian to RX
 - f is frequency (wideband embedding)
 - Migration from optics: original color as initial amplitude, random phase initialization [0, 2π]
 
-#### Complex Attenuation ρᵢ ∈ ℂ
+#### Complex Attenuation ρ_i ∈ ℂ
 Complex-valued attenuation factor, replacing optical real-valued opacity α:
 
-```
-ρᵢ = |ρᵢ| e^(j∠ρᵢ)
-```
+$$\rho_i = |\rho_i| e^{j\angle\rho_i}$$
 
 Captures path attenuation and phase shift. Calculated by MLP:
-```
-ρᵢ = g_Φ(γ(‖μᵢ - P_TX‖), v̂ᵢ)
-```
+$$\rho_i = g_\Phi(\gamma(\|\mu_i - P_{TX}\|), \hat{v}_i)$$
 
 Where:
 - γ is positional encoding (e.g., Fourier features)
@@ -246,20 +235,18 @@ Where:
 
 #### Additional RF-Specific Parameters
 
-**Phase Shift Term:** Introduces propagation phase shift e^(j·2π·dᵢ/λ), where dᵢ = ‖μᵢ - P_RX‖
+**Phase Shift Term:** Introduces propagation phase shift $e^{j \cdot 2\pi \cdot d_i/\lambda}$, where $d_i = \|\mu_i - P_{RX}\|$
 
 **Spherical Harmonics (Optional):** Extended to complex-valued SH to encode directional dependent radiation
 
 **Wideband Support:** Frequency embedding into MLP inputs
 
-**Initialization:** Gaussians generated from point clouds or optical models, with count N dynamically adjusted through splitting/cloning/pruning (e.g., gradient threshold ε_μ = 0.0002)
+**Initialization:** Gaussians generated from point clouds or optical models, with count N dynamically adjusted through splitting/cloning/pruning (e.g., gradient threshold $\varepsilon_\mu = 0.0002$)
 
 ### 2. Probability Density Function (PDF)
 
 3D Gaussian PDF:
-```
-P(x)ᵢ = exp(-½(x - μᵢ)ᵀΣᵢ⁻¹(x - μᵢ))
-```
+$$P(x)_i = \exp\left(-\frac{1}{2}(x - \mu_i)^T\Sigma_i^{-1}(x - \mu_i)\right)$$
 
 In wireless domain, used to define "soft" volume of signal contribution.
 
@@ -268,10 +255,8 @@ In wireless domain, used to define "soft" volume of signal contribution.
 Transition from optical real-valued alpha-blending to complex-valued coherent summation.
 
 #### Ray Definition
-From RX position l_RX along direction v̂ = (cos α cos β, sin α cos β, sin β)ᵀ:
-```
-γ(d) = l_RX + d v̂, d ≥ r_RX
-```
+From RX position l_RX along direction $\hat{v} = (\cos \alpha \cos \beta, \sin \alpha \cos \beta, \sin \beta)^T$:
+$$\gamma(d) = l_{RX} + d \hat{v}, \quad d \geq r_{RX}$$
 
 Where α is azimuth angle, β is elevation angle. Covers hemisphere (e.g., 360×90 rays, one-degree resolution).
 
@@ -283,41 +268,33 @@ Uᵢ = ψᵢ · G_proj,i · e^(j·2π·dᵢ/λ)
 
 #### Depth Sorting and Cumulative Attenuation
 Process Gaussians by depth (sorted from RX). Cumulative attenuation:
-```
-Sᵢ = (∏ⱼ₌₀ⁱ⁻¹ ρⱼ) ψᵢ
-```
+$$S_i = \left(\prod_{j=0}^{i-1} \rho_j\right) \psi_i$$
 
 Where the product is complex-valued (amplitude attenuation + phase accumulation).
 
 #### Splatting/Superposition
 For angle k (or pixel), complex-valued field:
-```
-hₖ = Σᵢ₌₁ᴺ Sᵢ · wᵢ
-```
+$$h_k = \sum_{i=1}^N S_i \cdot w_i$$
 
-Where wᵢ is weight (e.g., projection influence). Final power: Pₖ = |hₖ|²
+Where $w_i$ is weight (e.g., projection influence). Final power: $P_k = |h_k|^2$
 
 For antenna arrays, extend to spatial spectrum:
-```
-P(α,β) = |1/K Σₘ,ₙ e^(j(Δθ̂ₘ,ₙ - Δθₘ,ₙ))|²
-```
+$$P(\alpha,\beta) = \left|\frac{1}{K} \sum_{m,n} e^{j(\Delta\hat{\theta}_{m,n} - \Delta\theta_{m,n})}\right|^2$$
 
-Where Δθₘ,ₙ is phase difference based on antenna spacing D and wavelength λ.
+Where $\Delta\theta_{m,n}$ is phase difference based on antenna spacing D and wavelength $\lambda$.
 
 ### 4. Loss Function and Optimization
 
 Training uses differentiable rasterizer with end-to-end optimization:
 
-```
-L = λL_power + (1-λ)L_phase + L_reg
-```
+$$L = \lambda L_{power} + (1-\lambda)L_{phase} + L_{reg}$$
 
 Where:
-- **L_power = ‖|h_pred|² - P_gt‖₂²**: MSE on power
-- **L_phase = ‖∠h_pred - ∠h_gt‖₂²**: Phase loss (optional, if phase data available)
-- **L_reg**: L1 sparsity on paths + density control
+- **$L_{power} = \|{|h_{pred}|}^2 - P_{gt}\|_2^2$**: MSE on power
+- **$L_{phase} = \|\angle h_{pred} - \angle h_{gt}\|_2^2$**: Phase loss (optional, if phase data available)
+- **$L_{reg}$**: L1 sparsity on paths + density control
 
-Parameters: λ = 0.2, SGD with learning rates like η_ψ = 0.0025. Noise robustness added (GS3D style).
+Parameters: $\lambda = 0.2$, SGD with learning rates like $\eta_\psi = 0.0025$. Noise robustness added (GS3D style).
 
 ### 5. Key Adaptations from Optical to Wireless
 
@@ -334,7 +311,7 @@ Parameters: λ = 0.2, SGD with learning rates like η_ψ = 0.0025. Noise robustn
 - From camera view → RX hemisphere/array plane
 
 #### Initialization and Dynamic Adjustment
-- More splitting to capture multipath, thresholds like ε_ρ = 0.004
+- More splitting to capture multipath, thresholds like $\varepsilon_\rho = 0.004$
 
 ### 6. Implementation Example
 
@@ -644,15 +621,14 @@ print(f"Field at offset: {field_values[1]}")
 ### Primitive Parameters
 
 1. **Position** (μ): 3D center coordinates
-2. **Complex Radiance** (R): Complex radiance R = |R|e^(jφᵣ)
-3. **Scale** (σ): Standard deviations [σₓ, σᵧ, σᵤ]
+2. **Complex Radiance** (R): Complex radiance $R = |R|e^{j\phi_r}$
+3. **Scale** ($\sigma$): Standard deviations [$\sigma_x$, $\sigma_y$, $\sigma_z$]
 4. **Rotation** (Q): Orientation quaternion
-5. **Attenuation** (α): Complex attenuation coefficient α = |α|e^(jφₐ)
+5. **Attenuation** ($\alpha$): Complex attenuation coefficient $\alpha = |\alpha|e^{j\phi_a}$
 
 The Gaussian function becomes:
-```
-G(x) = α * R * exp(-½(x-μ)ᵀ Σ⁻¹ (x-μ))
-```
+
+$$G(x) = \alpha \cdot R \cdot \exp\left(-\frac{1}{2}(x-\mu)^T \Sigma^{-1} (x-\mu)\right)$$
 
 Where:
 - R is the complex radiance (intrinsic field emission)
@@ -831,7 +807,7 @@ The total field is the sum of all Gaussian contributions:
 # Mathematical representation
 def total_field(query_points, primitives):
     """
-    E_total(x) = Σᵢ Aᵢ * exp(-½(x-μᵢ)ᵀ Σᵢ⁻¹ (x-μᵢ))
+    E_total(x) = \sum_i A_i * \exp(-\frac{1}{2}(x-\mu_i)^T \Sigma_i^{-1} (x-\mu_i))
     """
     total = torch.zeros(len(query_points), dtype=torch.complex64)
     
@@ -849,7 +825,7 @@ The covariance matrix Σ determines the Gaussian shape:
 def compute_covariance(scale, rotation_matrix):
     """
     Σ = R * S * Rᵀ
-    where S = diag(σₓ², σᵧ², σᵤ²)
+    where S = diag(\sigma_x^2, \sigma_y^2, \sigma_z^2)
     """
     S = torch.diag(scale ** 2)
     covariance = rotation_matrix @ S @ rotation_matrix.T
