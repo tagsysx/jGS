@@ -3,254 +3,167 @@
 This document provides the complete technical specification for jGS (Complex-valued Gaussian Splatting for RF Signal Processing), including the mathematical model, implementation details, and theoretical foundations.
 
 ## Table of Contents
-1. [From Computer Graphics to RF](#from-computer-graphics-to-rf)
-2. [Complex-valued Fields](#complex-valued-fields)
-3. [Gaussian Primitives for RF](#gaussian-primitives-for-rf)
-4. [Data Storage and Memory Management](#data-storage-and-memory-management)
-5. [Mathematical Foundation](#mathematical-foundation)
+1. [From Optics to RF](#from-optics-to-rf)
+2. [Complete Mathematical Model](#complete-mathematical-model)
+3. [Complex-valued Fields](#complex-valued-fields)
+4. [Gaussian Primitives for RF](#gaussian-primitives-for-rf)
+5. [Data Storage and Memory Management](#data-storage-and-memory-management)
 6. [Rendering Process](#rendering-process)
 7. [Optimization and Learning](#optimization-and-learning)
 8. [Performance Considerations](#performance-considerations)
 
-## From Computer Graphics to RF
+## From Optics to RF
 
-### Traditional Gaussian Splatting
-Gaussian Splatting was originally developed for 3D scene representation in computer graphics:
-- **Goal**: Represent 3D scenes using Gaussian primitives
-- **Data**: RGB colors and opacity
-- **Rendering**: Project 3D Gaussians to 2D images
+### Background: Optical Gaussian Splatting
 
-### jGS Adaptation for RF
-We adapt this technique for electromagnetic field representation:
-- **Goal**: Represent RF fields using complex-valued Gaussians
-- **Data**: Complex radiance (magnitude + phase) with complex attenuation
-- **Rendering**: Evaluate field at arbitrary 3D points
-- **Physics**: Incorporates both radiance and attenuation effects
+Gaussian Splatting emerged as a revolutionary technique in computer graphics for novel view synthesis and 3D scene representation. The original optical approach models scenes using a collection of 3D Gaussian primitives, each representing a localized light emission or scattering point.
 
-```python
-# Traditional Gaussian Splatting (graphics)
-gaussian = {
-    'position': [x, y, z],
-    'color': [r, g, b],
-    'opacity': alpha,
-    'scale': [sx, sy, sz],
-    'rotation': quaternion
-}
+#### Core Principles of Optical Gaussian Splatting
 
-# jGS Complex Gaussian (RF)
-gaussian = {
-    'position': [x, y, z],
-    'radiance': magnitude * exp(1j * phase),
-    'scale': [sx, sy, sz],
-    'rotation': quaternion,
-    'attenuation': complex_attenuation_coefficient
-}
+**1. Scene Representation**
+- **Primitives**: 3D Gaussian ellipsoids positioned in space
+- **Attributes**: RGB color (real-valued), opacity (real scalar), geometric properties
+- **Rendering**: Differentiable rasterization to 2D camera views
+- **Optimization**: End-to-end learning from multi-view images
+
+**2. Mathematical Foundation**
+In optics, each Gaussian primitive contributes to the final image through:
+```math
+I = Σᵢ cᵢ · αᵢ · G(pixel, μᵢ, Σᵢ) · Tᵢ
 ```
-
-## Complex-valued Fields
-
-### Why Complex Numbers?
-RF electromagnetic fields are naturally complex due to their wave nature:
-
-1. **Magnitude**: Field strength or amplitude
-2. **Phase**: Temporal/spatial phase relationship
-3. **Frequency**: Determines wavelength and propagation
-
-```python
-import numpy as np
-import matplotlib.pyplot as plt
-
-# Example: Complex sinusoidal field
-t = np.linspace(0, 2*np.pi, 100)
-frequency = 2.4e9  # 2.4 GHz
-field = np.exp(1j * 2 * np.pi * frequency * t)
-
-magnitude = np.abs(field)  # Always 1 for this example
-phase = np.angle(field)    # Linear phase ramp
-
-# Visualization
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6))
-ax1.plot(t, magnitude, label='Magnitude')
-ax1.set_ylabel('|E|')
-ax1.legend()
-
-ax2.plot(t, phase, label='Phase', color='red')
-ax2.set_ylabel('∠E (rad)')
-ax2.set_xlabel('Time')
-ax2.legend()
-plt.tight_layout()
-```
-
-### Field Properties
-Complex fields encode multiple physical quantities:
-
-```python
-# Given a complex field E
-E = 2.5 * np.exp(1j * np.pi/4)  # Magnitude=2.5, Phase=45°
-
-# Extract properties
-magnitude = np.abs(E)           # Field strength
-phase = np.angle(E)             # Phase in radians
-power = np.abs(E)**2            # Power density
-real_part = np.real(E)          # In-phase component
-imag_part = np.imag(E)          # Quadrature component
-
-print(f"Magnitude: {magnitude:.2f}")
-print(f"Phase: {np.degrees(phase):.1f}°")
-print(f"Power: {power:.2f}")
-```
-
-### Complex Radiance and Attenuation
-
-In jGS, we distinguish between two key physical quantities:
-
-#### 1. Complex Radiance
-The **complex radiance** represents the intrinsic electromagnetic field emission or scattering from a source:
-
-```python
-# Complex radiance combines magnitude and phase
-radiance = magnitude * np.exp(1j * phase)
-
-# Examples of different radiance types:
-# Point source with uniform radiance
-uniform_radiance = 1.0 + 0j
-
-# Directional source with phase gradient
-directional_radiance = 2.5 * np.exp(1j * np.pi/3)  # 2.5 magnitude, 60° phase
-
-# Frequency-dependent radiance
-frequency = 2.4e9  # 2.4 GHz
-wavelength = 3e8 / frequency
-k = 2 * np.pi / wavelength
-radiance_with_propagation = np.exp(1j * k * distance)
-```
-
-#### 2. Complex Attenuation Coefficient
-The **complex attenuation coefficient** modulates the radiance based on material properties and propagation effects:
-
-```python
-# Complex attenuation coefficient
-attenuation = attenuation_magnitude * np.exp(1j * attenuation_phase)
-
-# Physical interpretations:
-# Real part: Amplitude attenuation (absorption, scattering)
-# Imaginary part: Phase shift (dispersion, refraction)
-
-# Examples:
-# No attenuation (free space)
-free_space = 1.0 + 0j
-
-# Pure amplitude attenuation (lossy medium)
-lossy_medium = 0.7 + 0j  # 30% power loss
-
-# Pure phase shift (dispersive medium)
-dispersive = 1.0 * np.exp(1j * np.pi/6)  # 30° phase shift, no loss
-
-# Combined attenuation and phase shift
-realistic_medium = 0.8 * np.exp(1j * np.pi/4)  # 20% loss + 45° phase shift
-```
-
-#### Combined Field Calculation
-The total field contribution from a Gaussian primitive is:
-
-```python
-def calculate_field_contribution(radiance, attenuation, gaussian_weight):
-    """
-    Calculate the field contribution from a primitive.
-    
-    Args:
-        radiance: Complex radiance value
-        attenuation: Complex attenuation coefficient  
-        gaussian_weight: Real-valued Gaussian spatial weight
-        
-    Returns:
-        Complex field contribution
-    """
-    # Convert Gaussian weight to complex for proper multiplication
-    complex_weight = gaussian_weight.to(dtype=torch.complex64)
-    
-    # Apply attenuation to the Gaussian weight
-    attenuated_weight = complex_weight * attenuation
-    
-    # Combine with radiance
-    field_contribution = attenuated_weight * radiance
-    
-    return field_contribution
-```
-
-#### Physical Examples
-
-```python
-# Example 1: Antenna with frequency-dependent attenuation
-antenna_radiance = 5.0 * np.exp(1j * 0)  # 5V/m, 0° phase
-frequency_attenuation = np.exp(-1j * 2 * np.pi * frequency * delay)
-field_1 = antenna_radiance * frequency_attenuation
-
-# Example 2: Scatterer in lossy medium
-scatterer_radiance = 2.0 * np.exp(1j * np.pi/2)  # 2V/m, 90° phase
-medium_loss = 0.6 + 0j  # 40% power loss
-medium_dispersion = np.exp(1j * np.pi/8)  # 22.5° phase shift
-combined_attenuation = medium_loss * medium_dispersion
-field_2 = scatterer_radiance * combined_attenuation
-
-# Example 3: Multi-path propagation
-direct_path = 1.0 + 0j  # No attenuation
-reflected_path = 0.8 * np.exp(1j * np.pi)  # 20% loss + 180° phase (reflection)
-```
-
-## Gaussian Primitives for RF
-
-### 3D Gaussian Distribution
-Each primitive represents a localized field distribution:
-
-```python
-import torch
-from jgs.core.primitives import ComplexGaussianPrimitive
-
-# Create a Gaussian primitive
-position = torch.tensor([1.0, 0.5, 0.0])      # Center position
-complex_radiance = torch.tensor(2.0 + 1j * 1.5)  # Complex radiance
-scale = torch.tensor([0.3, 0.3, 0.2])         # Size in each dimension
-rotation = torch.tensor([1.0, 0.0, 0.0, 0.0]) # Identity quaternion
-attenuation = torch.tensor(0.9 + 0.1j)        # Complex attenuation coefficient
-
-primitive = ComplexGaussianPrimitive(
-    position=position,
-    complex_value=complex_radiance,  # Represents radiance
-    scale=scale,
-    rotation=rotation,
-    attenuation=attenuation
-)
-
-# Evaluate at query points
-query_points = torch.tensor([[1.0, 0.5, 0.0],  # At center
-                            [1.5, 0.5, 0.0]])   # Offset
-field_values = primitive.evaluate(query_points)
-print(f"Field at center: {field_values[0]}")
-print(f"Field at offset: {field_values[1]}")
-```
-
-### Primitive Parameters
-
-1. **Position** (μ): 3D center coordinates
-2. **Complex Radiance** (R): Complex radiance R = |R|e^(jφᵣ)
-3. **Scale** (σ): Standard deviations [σₓ, σᵧ, σᵤ]
-4. **Rotation** (Q): Orientation quaternion
-5. **Attenuation** (α): Complex attenuation coefficient α = |α|e^(jφₐ)
-
-The Gaussian function becomes:
-```
-G(x) = α * R * exp(-½(x-μ)ᵀ Σ⁻¹ (x-μ))
-```
-
 Where:
-- R is the complex radiance (intrinsic field emission)
-- α is the complex attenuation coefficient (medium/propagation effects)
-- The product α * R gives the effective complex amplitude
+- `c_i` is RGB color (real-valued vector)
+- `αᵢ` is opacity (real scalar ∈ [0,1])
+- `G(·)` is the 2D projected Gaussian
+- `Tᵢ` is transmittance (accumulated opacity)
 
-Where Σ is the covariance matrix derived from scale and rotation.
+**3. Key Characteristics**
+- **Incoherent Summation**: Light intensities add directly (no phase relationships)
+- **Real-valued Data**: Colors and opacities are purely real
+- **2D Projection**: 3D Gaussians projected to 2D camera planes
+- **Alpha Blending**: Standard computer graphics compositing
 
-## Complete Mathematical Model for Complex-Valued 3D Gaussian Splatting
+### Motivation: Why Complex-Valued Gaussian Splatting for RF?
+
+The transition from optical to RF domains necessitates fundamental changes due to the wave nature of electromagnetic signals:
+
+#### 1. **Coherent vs Incoherent Phenomena**
+
+**Optical Domain (Incoherent)**:
+- Light from different sources adds in intensity: `I_total = I₁ + I₂ + I₃`
+- No phase relationships between independent sources
+- Suitable for real-valued representation
+
+**RF Domain (Coherent)**:
+- Electromagnetic waves add as complex phasors: `E_total = E₁ + E₂ + E₃`
+- Phase relationships critical for interference patterns
+- Requires complex-valued representation: `E = |E|e^(jφ)`
+
+#### 2. **Physical Phenomena Requiring Complex Representation**
+
+**Multipath Propagation**:
+```python
+# Direct path
+E_direct = A₁ * exp(j * k * d₁)
+
+# Reflected path  
+E_reflected = A₂ * exp(j * k * d₂) * exp(j * π)  # 180° phase shift
+
+# Total field (coherent superposition)
+E_total = E_direct + E_reflected
+```
+
+**Interference Effects**:
+- **Constructive**: When phases align → enhanced signal strength
+- **Destructive**: When phases oppose → signal cancellation
+- **Spatial Patterns**: Standing waves, nulls, and peaks
+
+**Frequency-Dependent Propagation**:
+- Phase velocity varies with frequency
+- Dispersion in materials
+- Wavelength-dependent scattering
+
+#### 3. **Limitations of Real-Valued Approaches**
+
+Traditional optical Gaussian Splatting cannot capture:
+
+**Phase Information**:
+- Critical for beamforming and array processing
+- Essential for channel state information (CSI)
+- Required for coherent detection systems
+
+**Complex Attenuation**:
+- Lossy media introduce both amplitude reduction and phase shifts
+- Dispersive materials cause frequency-dependent phase changes
+- Reflection coefficients are generally complex
+
+**Coherent Superposition**:
+- Multiple signal paths interfere coherently
+- Cannot be modeled by simple intensity addition
+- Requires complex field summation
+
+#### 4. **RF-Specific Requirements**
+
+**Antenna Patterns**:
+- Complex radiation patterns with magnitude and phase
+- Directional gain and phase characteristics
+- Polarization effects
+
+**Channel Modeling**:
+- Small-scale fading (Rayleigh, Rician)
+- Large-scale path loss
+- Shadowing and multipath clustering
+
+**System Applications**:
+- MIMO communication systems
+- Radar signal processing
+- Wireless localization
+- Beamforming and spatial filtering
+
+### The jGS Solution: Complex-Valued Extension
+
+jGS addresses these challenges by extending Gaussian Splatting to the complex domain:
+
+#### Key Innovations
+
+**1. Complex Radiance**: `ψᵢ ∈ ℂ`
+- Represents intrinsic electromagnetic field emission
+- Captures both magnitude and phase of sources
+- Enables modeling of coherent sources
+
+**2. Complex Attenuation**: `ρᵢ ∈ ℂ`  
+- Models propagation effects through complex media
+- Handles both loss (real part) and phase shift (imaginary part)
+- Replaces simple opacity with physically meaningful attenuation
+
+**3. Coherent Field Summation**:
+```python
+# Optical (incoherent)
+I_total = Σᵢ |cᵢ|² * αᵢ * G(x, μᵢ, Σᵢ)
+
+# RF (coherent)  
+E_total = Σᵢ ψᵢ * ρᵢ * G(x, μᵢ, Σᵢ) * exp(j*k*dᵢ)
+```
+
+**4. 3D Field Evaluation**:
+- Direct 3D field computation (not 2D projection)
+- Arbitrary receiver positions and orientations
+- Full electromagnetic field reconstruction
+
+#### Comparison Summary
+
+| Aspect | Optical GS | jGS (RF) |
+|--------|------------|----------|
+| **Field Type** | Incoherent light | Coherent EM waves |
+| **Data Type** | Real-valued | Complex-valued |
+| **Summation** | Intensity addition | Phasor addition |
+| **Attenuation** | Real opacity | Complex coefficient |
+| **Output** | 2D images | 3D field values |
+| **Applications** | View synthesis | RF propagation modeling |
+
+This fundamental shift from real to complex representation enables jGS to accurately model the rich physics of electromagnetic wave propagation, interference, and scattering phenomena that are essential for RF system design and analysis.
+
+## Complete Mathematical Model
 
 ### Overview: From Optical to Wireless Signal Domain
 
@@ -544,6 +457,209 @@ print(f"Phase: {torch.angle(field):.3f} rad ({torch.angle(field)*180/np.pi:.1f}�
 ```
 
 This mathematical model enables accurate modeling of RF propagation phenomena including multipath, interference, and coherent superposition effects that are critical for wireless communication systems.
+
+## Complex-valued Fields
+
+### Why Complex Numbers?
+RF electromagnetic fields are naturally complex due to their wave nature:
+
+1. **Magnitude**: Field strength or amplitude
+2. **Phase**: Temporal/spatial phase relationship
+3. **Frequency**: Determines wavelength and propagation
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Example: Complex sinusoidal field
+t = np.linspace(0, 2*np.pi, 100)
+frequency = 2.4e9  # 2.4 GHz
+field = np.exp(1j * 2 * np.pi * frequency * t)
+
+magnitude = np.abs(field)  # Always 1 for this example
+phase = np.angle(field)    # Linear phase ramp
+
+# Visualization
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6))
+ax1.plot(t, magnitude, label='Magnitude')
+ax1.set_ylabel('|E|')
+ax1.legend()
+
+ax2.plot(t, phase, label='Phase', color='red')
+ax2.set_ylabel('∠E (rad)')
+ax2.set_xlabel('Time')
+ax2.legend()
+plt.tight_layout()
+```
+
+### Field Properties
+Complex fields encode multiple physical quantities:
+
+```python
+# Given a complex field E
+E = 2.5 * np.exp(1j * np.pi/4)  # Magnitude=2.5, Phase=45°
+
+# Extract properties
+magnitude = np.abs(E)           # Field strength
+phase = np.angle(E)             # Phase in radians
+power = np.abs(E)**2            # Power density
+real_part = np.real(E)          # In-phase component
+imag_part = np.imag(E)          # Quadrature component
+
+print(f"Magnitude: {magnitude:.2f}")
+print(f"Phase: {np.degrees(phase):.1f}°")
+print(f"Power: {power:.2f}")
+```
+
+### Complex Radiance and Attenuation
+
+In jGS, we distinguish between two key physical quantities:
+
+#### 1. Complex Radiance
+The **complex radiance** represents the intrinsic electromagnetic field emission or scattering from a source:
+
+```python
+# Complex radiance combines magnitude and phase
+radiance = magnitude * np.exp(1j * phase)
+
+# Examples of different radiance types:
+# Point source with uniform radiance
+uniform_radiance = 1.0 + 0j
+
+# Directional source with phase gradient
+directional_radiance = 2.5 * np.exp(1j * np.pi/3)  # 2.5 magnitude, 60° phase
+
+# Frequency-dependent radiance
+frequency = 2.4e9  # 2.4 GHz
+wavelength = 3e8 / frequency
+k = 2 * np.pi / wavelength
+radiance_with_propagation = np.exp(1j * k * distance)
+```
+
+#### 2. Complex Attenuation Coefficient
+The **complex attenuation coefficient** modulates the radiance based on material properties and propagation effects:
+
+```python
+# Complex attenuation coefficient
+attenuation = attenuation_magnitude * np.exp(1j * attenuation_phase)
+
+# Physical interpretations:
+# Real part: Amplitude attenuation (absorption, scattering)
+# Imaginary part: Phase shift (dispersion, refraction)
+
+# Examples:
+# No attenuation (free space)
+free_space = 1.0 + 0j
+
+# Pure amplitude attenuation (lossy medium)
+lossy_medium = 0.7 + 0j  # 30% power loss
+
+# Pure phase shift (dispersive medium)
+dispersive = 1.0 * np.exp(1j * np.pi/6)  # 30° phase shift, no loss
+
+# Combined attenuation and phase shift
+realistic_medium = 0.8 * np.exp(1j * np.pi/4)  # 20% loss + 45° phase shift
+```
+
+#### Combined Field Calculation
+The total field contribution from a Gaussian primitive is:
+
+```python
+def calculate_field_contribution(radiance, attenuation, gaussian_weight):
+    """
+    Calculate the field contribution from a primitive.
+    
+    Args:
+        radiance: Complex radiance value
+        attenuation: Complex attenuation coefficient  
+        gaussian_weight: Real-valued Gaussian spatial weight
+        
+    Returns:
+        Complex field contribution
+    """
+    # Convert Gaussian weight to complex for proper multiplication
+    complex_weight = gaussian_weight.to(dtype=torch.complex64)
+    
+    # Apply attenuation to the Gaussian weight
+    attenuated_weight = complex_weight * attenuation
+    
+    # Combine with radiance
+    field_contribution = attenuated_weight * radiance
+    
+    return field_contribution
+```
+
+#### Physical Examples
+
+```python
+# Example 1: Antenna with frequency-dependent attenuation
+antenna_radiance = 5.0 * np.exp(1j * 0)  # 5V/m, 0° phase
+frequency_attenuation = np.exp(-1j * 2 * np.pi * frequency * delay)
+field_1 = antenna_radiance * frequency_attenuation
+
+# Example 2: Scatterer in lossy medium
+scatterer_radiance = 2.0 * np.exp(1j * np.pi/2)  # 2V/m, 90° phase
+medium_loss = 0.6 + 0j  # 40% power loss
+medium_dispersion = np.exp(1j * np.pi/8)  # 22.5° phase shift
+combined_attenuation = medium_loss * medium_dispersion
+field_2 = scatterer_radiance * combined_attenuation
+
+# Example 3: Multi-path propagation
+direct_path = 1.0 + 0j  # No attenuation
+reflected_path = 0.8 * np.exp(1j * np.pi)  # 20% loss + 180° phase (reflection)
+```
+
+## Gaussian Primitives for RF
+
+### 3D Gaussian Distribution
+Each primitive represents a localized field distribution:
+
+```python
+import torch
+from jgs.core.primitives import ComplexGaussianPrimitive
+
+# Create a Gaussian primitive
+position = torch.tensor([1.0, 0.5, 0.0])      # Center position
+complex_radiance = torch.tensor(2.0 + 1j * 1.5)  # Complex radiance
+scale = torch.tensor([0.3, 0.3, 0.2])         # Size in each dimension
+rotation = torch.tensor([1.0, 0.0, 0.0, 0.0]) # Identity quaternion
+attenuation = torch.tensor(0.9 + 0.1j)        # Complex attenuation coefficient
+
+primitive = ComplexGaussianPrimitive(
+    position=position,
+    complex_value=complex_radiance,  # Represents radiance
+    scale=scale,
+    rotation=rotation,
+    attenuation=attenuation
+)
+
+# Evaluate at query points
+query_points = torch.tensor([[1.0, 0.5, 0.0],  # At center
+                            [1.5, 0.5, 0.0]])   # Offset
+field_values = primitive.evaluate(query_points)
+print(f"Field at center: {field_values[0]}")
+print(f"Field at offset: {field_values[1]}")
+```
+
+### Primitive Parameters
+
+1. **Position** (μ): 3D center coordinates
+2. **Complex Radiance** (R): Complex radiance R = |R|e^(jφᵣ)
+3. **Scale** (σ): Standard deviations [σₓ, σᵧ, σᵤ]
+4. **Rotation** (Q): Orientation quaternion
+5. **Attenuation** (α): Complex attenuation coefficient α = |α|e^(jφₐ)
+
+The Gaussian function becomes:
+```
+G(x) = α * R * exp(-½(x-μ)ᵀ Σ⁻¹ (x-μ))
+```
+
+Where:
+- R is the complex radiance (intrinsic field emission)
+- α is the complex attenuation coefficient (medium/propagation effects)
+- The product α * R gives the effective complex amplitude
+
+Where Σ is the covariance matrix derived from scale and rotation.
 
 ## Data Storage and Memory Management
 
