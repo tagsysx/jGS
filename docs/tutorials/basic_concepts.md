@@ -23,8 +23,9 @@ Gaussian Splatting was originally developed for 3D scene representation in compu
 ### jGS Adaptation for RF
 We adapt this technique for electromagnetic field representation:
 - **Goal**: Represent RF fields using complex-valued Gaussians
-- **Data**: Complex amplitudes (magnitude + phase)
+- **Data**: Complex radiance (magnitude + phase) with complex attenuation
 - **Rendering**: Evaluate field at arbitrary 3D points
+- **Physics**: Incorporates both radiance and attenuation effects
 
 ```python
 # Traditional Gaussian Splatting (graphics)
@@ -39,9 +40,10 @@ gaussian = {
 # jGS Complex Gaussian (RF)
 gaussian = {
     'position': [x, y, z],
-    'complex_value': magnitude * exp(1j * phase),
+    'radiance': magnitude * exp(1j * phase),
     'scale': [sx, sy, sz],
-    'rotation': quaternion
+    'rotation': quaternion,
+    'attenuation': complex_attenuation_coefficient
 }
 ```
 
@@ -98,6 +100,104 @@ print(f"Phase: {np.degrees(phase):.1f}°")
 print(f"Power: {power:.2f}")
 ```
 
+### Complex Radiance and Attenuation
+
+In jGS, we distinguish between two key physical quantities:
+
+#### 1. Complex Radiance
+The **complex radiance** represents the intrinsic electromagnetic field emission or scattering from a source:
+
+```python
+# Complex radiance combines magnitude and phase
+radiance = magnitude * np.exp(1j * phase)
+
+# Examples of different radiance types:
+# Point source with uniform radiance
+uniform_radiance = 1.0 + 0j
+
+# Directional source with phase gradient
+directional_radiance = 2.5 * np.exp(1j * np.pi/3)  # 2.5 magnitude, 60° phase
+
+# Frequency-dependent radiance
+frequency = 2.4e9  # 2.4 GHz
+wavelength = 3e8 / frequency
+k = 2 * np.pi / wavelength
+radiance_with_propagation = np.exp(1j * k * distance)
+```
+
+#### 2. Complex Attenuation Coefficient
+The **complex attenuation coefficient** modulates the radiance based on material properties and propagation effects:
+
+```python
+# Complex attenuation coefficient
+attenuation = attenuation_magnitude * np.exp(1j * attenuation_phase)
+
+# Physical interpretations:
+# Real part: Amplitude attenuation (absorption, scattering)
+# Imaginary part: Phase shift (dispersion, refraction)
+
+# Examples:
+# No attenuation (free space)
+free_space = 1.0 + 0j
+
+# Pure amplitude attenuation (lossy medium)
+lossy_medium = 0.7 + 0j  # 30% power loss
+
+# Pure phase shift (dispersive medium)
+dispersive = 1.0 * np.exp(1j * np.pi/6)  # 30° phase shift, no loss
+
+# Combined attenuation and phase shift
+realistic_medium = 0.8 * np.exp(1j * np.pi/4)  # 20% loss + 45° phase shift
+```
+
+#### Combined Field Calculation
+The total field contribution from a Gaussian primitive is:
+
+```python
+def calculate_field_contribution(radiance, attenuation, gaussian_weight):
+    """
+    Calculate the field contribution from a primitive.
+    
+    Args:
+        radiance: Complex radiance value
+        attenuation: Complex attenuation coefficient  
+        gaussian_weight: Real-valued Gaussian spatial weight
+        
+    Returns:
+        Complex field contribution
+    """
+    # Convert Gaussian weight to complex for proper multiplication
+    complex_weight = gaussian_weight.to(dtype=torch.complex64)
+    
+    # Apply attenuation to the Gaussian weight
+    attenuated_weight = complex_weight * attenuation
+    
+    # Combine with radiance
+    field_contribution = attenuated_weight * radiance
+    
+    return field_contribution
+```
+
+#### Physical Examples
+
+```python
+# Example 1: Antenna with frequency-dependent attenuation
+antenna_radiance = 5.0 * np.exp(1j * 0)  # 5V/m, 0° phase
+frequency_attenuation = np.exp(-1j * 2 * np.pi * frequency * delay)
+field_1 = antenna_radiance * frequency_attenuation
+
+# Example 2: Scatterer in lossy medium
+scatterer_radiance = 2.0 * np.exp(1j * np.pi/2)  # 2V/m, 90° phase
+medium_loss = 0.6 + 0j  # 40% power loss
+medium_dispersion = np.exp(1j * np.pi/8)  # 22.5° phase shift
+combined_attenuation = medium_loss * medium_dispersion
+field_2 = scatterer_radiance * combined_attenuation
+
+# Example 3: Multi-path propagation
+direct_path = 1.0 + 0j  # No attenuation
+reflected_path = 0.8 * np.exp(1j * np.pi)  # 20% loss + 180° phase (reflection)
+```
+
 ## Gaussian Primitives for RF
 
 ### 3D Gaussian Distribution
@@ -109,15 +209,17 @@ from jgs.core.primitives import ComplexGaussianPrimitive
 
 # Create a Gaussian primitive
 position = torch.tensor([1.0, 0.5, 0.0])      # Center position
-complex_value = torch.tensor(2.0 + 1j * 1.5)  # Complex amplitude
+complex_radiance = torch.tensor(2.0 + 1j * 1.5)  # Complex radiance
 scale = torch.tensor([0.3, 0.3, 0.2])         # Size in each dimension
 rotation = torch.tensor([1.0, 0.0, 0.0, 0.0]) # Identity quaternion
+attenuation = torch.tensor(0.9 + 0.1j)        # Complex attenuation coefficient
 
 primitive = ComplexGaussianPrimitive(
     position=position,
-    complex_value=complex_value,
+    complex_value=complex_radiance,  # Represents radiance
     scale=scale,
-    rotation=rotation
+    rotation=rotation,
+    attenuation=attenuation
 )
 
 # Evaluate at query points
@@ -131,14 +233,20 @@ print(f"Field at offset: {field_values[1]}")
 ### Primitive Parameters
 
 1. **Position** (μ): 3D center coordinates
-2. **Complex Value** (A): Complex amplitude A = |A|e^(jφ)
+2. **Complex Radiance** (R): Complex radiance R = |R|e^(jφᵣ)
 3. **Scale** (σ): Standard deviations [σₓ, σᵧ, σᵤ]
-4. **Rotation** (R): Orientation quaternion
+4. **Rotation** (Q): Orientation quaternion
+5. **Attenuation** (α): Complex attenuation coefficient α = |α|e^(jφₐ)
 
 The Gaussian function becomes:
 ```
-G(x) = A * exp(-½(x-μ)ᵀ Σ⁻¹ (x-μ))
+G(x) = α * R * exp(-½(x-μ)ᵀ Σ⁻¹ (x-μ))
 ```
+
+Where:
+- R is the complex radiance (intrinsic field emission)
+- α is the complex attenuation coefficient (medium/propagation effects)
+- The product α * R gives the effective complex amplitude
 
 Where Σ is the covariance matrix derived from scale and rotation.
 
@@ -154,13 +262,14 @@ Each Gaussian primitive requires the following core parameters:
 
 ```python
 # Per-primitive storage requirements:
-position_data = torch.float32  # 3 values × 4 bytes = 12 bytes
-complex_value = torch.complex64  # 1 complex × 8 bytes = 8 bytes
-scale_data = torch.float32     # 3 values × 4 bytes = 12 bytes
-rotation_data = torch.float32  # 4 quaternion × 4 bytes = 16 bytes
-# Total per primitive: 48 bytes
+position_data = torch.float32    # 3 values × 4 bytes = 12 bytes
+complex_radiance = torch.complex64  # 1 complex × 8 bytes = 8 bytes
+scale_data = torch.float32       # 3 values × 4 bytes = 12 bytes
+rotation_data = torch.float32    # 4 quaternion × 4 bytes = 16 bytes
+attenuation_data = torch.complex64  # 1 complex × 8 bytes = 8 bytes
+# Total per primitive: 56 bytes
 
-# For N primitives: 48N bytes of core parameters
+# For N primitives: 56N bytes of core parameters
 ```
 
 #### Tensor-based Storage
@@ -189,7 +298,7 @@ class ComplexGaussianSplatter(nn.Module):
 ```python
 # Example: Memory usage for 1000 primitives
 n_primitives = 1000
-core_memory = n_primitives * 48  # 48,000 bytes = 47 KB
+core_memory = n_primitives * 56  # 56,000 bytes = 55 KB
 
 # Additional derived data (computed per primitive):
 rotation_matrix = 9 * 4  # 3x3 matrix = 36 bytes
@@ -198,7 +307,7 @@ inv_covariance = 9 * 4   # 3x3 matrix = 36 bytes
 det_covariance = 1 * 4   # scalar = 4 bytes
 # Derived per primitive: 112 bytes
 
-total_memory = core_memory + (n_primitives * 112)  # 160 KB total
+total_memory = core_memory + (n_primitives * 112)  # 168 KB total
 ```
 
 ### Capacity Scaling
@@ -206,22 +315,22 @@ total_memory = core_memory + (n_primitives * 112)  # 160 KB total
 The system can handle varying numbers of primitives efficiently:
 
 ```python
-# Small models (< 1K primitives): ~160 KB
+# Small models (< 1K primitives): ~168 KB
 small_model = ComplexGaussianSplatter(
     positions=torch.randn(500, 3),
-    complex_values=torch.randn(500, dtype=torch.complex64)
+    complex_values=torch.randn(500, dtype=torch.complex64)  # Now represents radiance
 )
 
-# Medium models (1K-10K primitives): ~1.6 MB
+# Medium models (1K-10K primitives): ~1.68 MB
 medium_model = ComplexGaussianSplatter(
     positions=torch.randn(5000, 3),
-    complex_values=torch.randn(5000, dtype=torch.complex64)
+    complex_values=torch.randn(5000, dtype=torch.complex64)  # Radiance values
 )
 
-# Large models (10K-100K primitives): ~16 MB
+# Large models (10K-100K primitives): ~16.8 MB
 large_model = ComplexGaussianSplatter(
     positions=torch.randn(50000, 3),
-    complex_values=torch.randn(50000, dtype=torch.complex64)
+    complex_values=torch.randn(50000, dtype=torch.complex64)  # Radiance values
 )
 ```
 

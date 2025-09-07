@@ -9,7 +9,7 @@ localized RF field distributions.
 import torch
 import torch.nn.functional as F
 import numpy as np
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 import logging
 
 logger = logging.getLogger(__name__)
@@ -29,23 +29,28 @@ class ComplexGaussianPrimitive:
         complex_value: torch.Tensor,
         scale: torch.Tensor,
         rotation: torch.Tensor,
-        opacity: float = 1.0
+        attenuation: Union[float, torch.Tensor] = 1.0
     ):
         """
         Initialize a complex Gaussian primitive.
         
         Args:
             position: 3D center position (3,)
-            complex_value: Complex amplitude value
+            complex_value: Complex radiance amplitude value
             scale: Scaling factors for each axis (3,)
             rotation: Rotation quaternion (w, x, y, z) (4,)
-            opacity: Opacity/strength factor [0, 1]
+            attenuation: Complex-valued attenuation coefficient (default: 1.0+0j)
         """
         self.position = position
-        self.complex_value = complex_value
+        self.complex_value = complex_value  # Now represents radiance
         self.scale = scale
         self.rotation = rotation
-        self.opacity = opacity
+        
+        # Convert attenuation to complex tensor if needed
+        if isinstance(attenuation, (int, float)):
+            self.attenuation = torch.tensor(complex(attenuation, 0), dtype=torch.complex64, device=position.device)
+        else:
+            self.attenuation = attenuation.to(dtype=torch.complex64, device=position.device)
         
         # Precompute rotation matrix from quaternion
         self.rotation_matrix = self._quaternion_to_rotation_matrix(rotation)
@@ -127,8 +132,9 @@ class ComplexGaussianPrimitive:
         normalization = 1.0 / torch.sqrt((2 * np.pi) ** 3 * self.det_covariance)
         gaussian_weight = normalization * torch.exp(-0.5 * mahalanobis_sq)
         
-        # Apply opacity
-        gaussian_weight *= self.opacity
+        # Apply complex attenuation coefficient
+        gaussian_weight = gaussian_weight.to(dtype=torch.complex64)
+        gaussian_weight *= self.attenuation
         
         # Apply complex amplitude
         if frequency is not None:
@@ -233,7 +239,7 @@ class ComplexGaussianPrimitive:
             complex_value=self.complex_value.clone(),
             scale=self.scale.clone(),
             rotation=self.rotation.clone(),
-            opacity=self.opacity
+            attenuation=self.attenuation.clone()
         )
     
     def to_dict(self) -> dict:
@@ -243,16 +249,25 @@ class ComplexGaussianPrimitive:
             'complex_value': self.complex_value.detach().cpu().numpy(),
             'scale': self.scale.detach().cpu().numpy(),
             'rotation': self.rotation.detach().cpu().numpy(),
-            'opacity': self.opacity
+            'attenuation': self.attenuation.detach().cpu().numpy()
         }
     
     @classmethod
     def from_dict(cls, data: dict, device: torch.device) -> 'ComplexGaussianPrimitive':
         """Create primitive from dictionary representation."""
+        # Handle backward compatibility
+        if 'attenuation' in data:
+            attenuation = torch.tensor(data['attenuation'], device=device)
+        elif 'opacity' in data:
+            # Convert old opacity to complex attenuation
+            attenuation = torch.tensor(complex(data['opacity'], 0), device=device, dtype=torch.complex64)
+        else:
+            attenuation = torch.tensor(1.0+0j, device=device, dtype=torch.complex64)
+            
         return cls(
             position=torch.tensor(data['position'], device=device),
             complex_value=torch.tensor(data['complex_value'], device=device),
             scale=torch.tensor(data['scale'], device=device),
             rotation=torch.tensor(data['rotation'], device=device),
-            opacity=data['opacity']
+            attenuation=attenuation
         )
