@@ -1,5 +1,7 @@
 # jGS: Complex-Valued Gaussian Splatting for RF Signal Processing
 
+> **⚠️ UNDER DEVELOPMENT** - This project is currently under active development. Features may be incomplete, APIs may change, and documentation may be outdated. Use at your own discretion.
+
 A novel adaptation of Gaussian Splatting techniques for complex-valued RF signal representation and processing.
 
 ## Overview
