@@ -12,7 +12,7 @@ This document provides the complete technical specification for jGS (Complex-val
 7. [Optimization and Learning](#optimization-and-learning)
 8. [Performance Considerations](#performance-considerations)
 
-## From Optics to RF
+## 1. From Optics to RF
 
 ### Background: Optical Gaussian Splatting
 
@@ -48,8 +48,6 @@ Where:
 
 The transition from optical to RF domains necessitates fundamental changes due to the wave nature of electromagnetic signals:
 
-#### 1. **Coherent vs Incoherent Phenomena**
-
 **Optical Domain (Incoherent)**:
 - Light from different sources adds in intensity: $I_{total} = I_1 + I_2 + I_3$
 - No phase relationships between independent sources
@@ -60,168 +58,65 @@ The transition from optical to RF domains necessitates fundamental changes due t
 - Phase relationships critical for interference patterns
 - Requires complex-valued representation: $E = |E|e^{j\phi}$
 
-#### 2. **Physical Phenomena Requiring Complex Representation**
 
-**Multipath Propagation**:
-```python
-# Direct path
-E_direct = A_1 * exp(j * k * d_1)
-
-# Reflected path  
-E_reflected = A_2 * exp(j * k * d_2) * exp(j * π)  # 180° phase shift
-
-# Total field (coherent superposition)
-E_total = E_direct + E_reflected
-```
-
-**Interference Effects**:
-- **Constructive**: When phases align → enhanced signal strength
-- **Destructive**: When phases oppose → signal cancellation
-- **Spatial Patterns**: Standing waves, nulls, and peaks
-
-**Frequency-Dependent Propagation**:
-- Phase velocity varies with frequency
-- Dispersion in materials
-- Wavelength-dependent scattering
-
-#### 3. **Limitations of Real-Valued Approaches**
-
-Traditional optical Gaussian Splatting cannot capture:
-
-**Phase Information**:
-- Critical for beamforming and array processing
-- Essential for channel state information (CSI)
-- Required for coherent detection systems
-
-**Complex Attenuation**:
-- Lossy media introduce both amplitude reduction and phase shifts
-- Dispersive materials cause frequency-dependent phase changes
-- Reflection coefficients are generally complex
-
-**Coherent Superposition**:
-- Multiple signal paths interfere coherently
-- Cannot be modeled by simple intensity addition
-- Requires complex field summation
-
-#### 4. **RF-Specific Requirements**
-
-**Antenna Patterns**:
-- Complex radiation patterns with magnitude and phase
-- Directional gain and phase characteristics
-- Polarization effects
-
-**Channel Modeling**:
-- Small-scale fading (Rayleigh, Rician)
-- Large-scale path loss
-- Shadowing and multipath clustering
-
-**System Applications**:
-- MIMO communication systems
-- Radar signal processing
-- Wireless localization
-- Beamforming and spatial filtering
-
-### The jGS Solution: Complex-Valued Extension
-
-jGS addresses these challenges by extending Gaussian Splatting to the complex domain:
-
-#### Key Innovations
-
-**1. Complex Radiance**: `ψ_i ∈ ℂ`
-- Represents intrinsic electromagnetic field emission
-- Captures both magnitude and phase of sources
-- Enables modeling of coherent sources
-
-**2. Complex Attenuation**: `ρ_i ∈ ℂ`  
-- Models propagation effects through complex media
-- Handles both loss (real part) and phase shift (imaginary part)
-- Replaces simple opacity with physically meaningful attenuation
-
-**3. Coherent Field Summation**:
-```python
-# Optical (incoherent)
-I_total = sum_i |c_i|^2 * α_i * G(x, μ_i, Σ_i)
-
-# RF (coherent)  
-E_total = sum_i ψ_i * ρ_i * G(x, μ_i, Σ_i) * exp(j*k*d_i)
-```
-
-**4. 3D Field Evaluation**:
-- Direct 3D field computation (not 2D projection)
-- Arbitrary receiver positions and orientations
-- Full electromagnetic field reconstruction
-
-#### Comparison Summary
-
-| Aspect | Optical GS | jGS (RF) |
-|--------|------------|----------|
-| **Field Type** | Incoherent light | Coherent EM waves |
-| **Data Type** | Real-valued | Complex-valued |
-| **Summation** | Intensity addition | Phasor addition |
-| **Attenuation** | Real opacity | Complex coefficient |
-| **Output** | 2D images | 3D field values |
-| **Applications** | View synthesis | RF propagation modeling |
-
-This fundamental shift from real to complex representation enables jGS to accurately model the rich physics of electromagnetic wave propagation, interference, and scattering phenomena that are essential for RF system design and analysis.
-
-## Complete Mathematical Model
+## 2. Complete Mathematical Model
 
 ### Overview: From Optical to Wireless Signal Domain
 
-This section presents the complete mathematical model for complex-valued 3D Gaussian Splatting (3DGS) adapted from the optical domain to the wireless signal domain (such as RF radiation field modeling). This model is based on research including WRF-GS (Wireless Radiation Field with Gaussian Splatting), RFSPM (RF Signal Spatial Propagation Modeling), and GS3D (Gaussian Splatting-Synergized Stable Diffusion).
+This section presents the complete mathematical model for complex-valued 3D Gaussian Splatting (3DGS) adapted from the optical domain to the wireless signal domain (such as RF radiation field modeling).
 
 The key adaptation extends real-valued radiation fields from optics to complex-valued electromagnetic fields to capture both amplitude and phase, handling multipath propagation, interference, and coherent superposition. While optical 3DGS primarily deals with incoherent real-valued intensity, the wireless domain requires complex-valued representation to simulate electromagnetic wave phase shifts and attenuation.
 
 **Model Assumptions:**
-- Scene represented by N 3D Gaussians, each representing a virtual scatterer or signal path contribution
-- Input: Transmitter (TX) position, Receiver (RX) position, wavelength λ, and frequency f (for wideband signals)
-- Output: Complex-valued field h at RX, or its power |h|² (such as RSSI or CSI)
+- Scene represented by $N$ 3D Gaussians, each representing a virtual scatterer or signal path contribution
+- Input: Transmitter (TX) position, Receiver (RX) position, wavelength $\lambda$, and frequency $f$ (for wideband signals)
+- Output: Complex-valued field $h$ at RX, or its power $|h|^2$ (such as RSSI or CSI)
 
 ### 1. Gaussian Parameter Definitions
 
-Each Gaussian i (i=1 to N) is defined by the following parameters, with the key innovation being the introduction of complex values to handle the coherent nature of wireless signals:
+Each Gaussian $i$ (i=1 to $N$) is defined by the following parameters, with the key innovation being the introduction of complex values to handle the coherent nature of wireless signals:
 
-#### Position Mean μ_i ∈ ℝ³
-3D spatial position vector. Migrated from optical model, directly using original μ, but with relaxed parameterization to capture multipath:
+#### Position Mean $\mu_i \in \mathbb{R}^3$
+3D spatial position vector. Migrated from optical model, directly using original $\mu$, but with relaxed parameterization to capture multipath:
 
 $$\mu_i = T_i \cdot P_{ref} + B_i$$
 
 Where:
-- T_i is selection matrix (N × R, R is number of reference points like TX positions)
-- P_ref is reference positions
+- $T_i$ is selection matrix ($N \times R$, $R$ is number of reference points like TX positions)
+- $P_{ref}$ is reference positions
 - $B_i$ is bias term
-- L1 regularization added to promote sparse paths
+- $L_1$ regularization added to promote sparse paths
 
-#### Covariance Matrix Σ_i ∈ ℝ³ˣ³
+#### Covariance Matrix $\Sigma_i \in \mathbb{R}^{3 \times 3}$
 Defines shape, size, and orientation, ensuring positive semi-definite:
 
 $$\Sigma_i = R_i S_i S_i^T R_i^T$$
 
 Where:
-- R_i is rotation matrix
-- S_i is scaling matrix
+- $R_i$ is rotation matrix
+- $S_i$ is scaling matrix
 - Inherited from optics but initialization adjusted to reflect RF uncertainty (e.g., multipath spread)
 - No direct complex values, but frequency dependence considered during projection
 
-#### Complex Radiance/Emission ψ_i ∈ ℂ
-Complex-valued signal strength, replacing optical real-valued color c:
+#### Complex Radiance/Emission $\psi_i \in \mathbb{C}$
+Complex-valued signal strength, replacing optical real-valued color $c$:
 
 $$\psi_i = |\psi_i| e^{j\angle\psi_i}$$
 
 Where:
-- |ψ_i| is amplitude
-- ∠ψ_i is phase
+- $|\psi_i|$ is amplitude
+- $\angle\psi_i$ is phase
 
 Modeled by small MLP:
 $$\psi_i = f_\Theta(\mu_i, P_{TX}, \hat{v}_i, f)$$
 
 Where:
 - $\hat{v}_i$ is direction vector from Gaussian to RX
-- f is frequency (wideband embedding)
-- Migration from optics: original color as initial amplitude, random phase initialization [0, 2π]
+- $f$ is frequency (wideband embedding)
+- Migration from optics: original color as initial amplitude, random phase initialization $[0, 2\pi]$
 
-#### Complex Attenuation ρ_i ∈ ℂ
-Complex-valued attenuation factor, replacing optical real-valued opacity α:
+#### Complex Attenuation $\rho_i \in \mathbb{C}$
+Complex-valued attenuation factor, replacing optical real-valued opacity $\alpha$:
 
 $$\rho_i = |\rho_i| e^{j\angle\rho_i}$$
 
@@ -229,9 +124,9 @@ Captures path attenuation and phase shift. Calculated by MLP:
 $$\rho_i = g_\Phi(\gamma(\|\mu_i - P_{TX}\|), \hat{v}_i)$$
 
 Where:
-- γ is positional encoding (e.g., Fourier features)
+- $\gamma$ is positional encoding (e.g., Fourier features)
 - Cumulative attenuation considers depth ordering
-- Migration from optics: α as initial amplitude, adding random phase
+- Migration from optics: $\alpha$ as initial amplitude, adding random phase
 
 #### Additional RF-Specific Parameters
 
@@ -241,7 +136,7 @@ Where:
 
 **Wideband Support:** Frequency embedding into MLP inputs
 
-**Initialization:** Gaussians generated from point clouds or optical models, with count N dynamically adjusted through splitting/cloning/pruning (e.g., gradient threshold $\varepsilon_\mu = 0.0002$)
+**Initialization:** Gaussians generated from point clouds or optical models, with count $N$ dynamically adjusted through splitting/cloning/pruning (e.g., gradient threshold $\varepsilon_\mu = 0.0002$)
 
 ### 2. Probability Density Function (PDF)
 
@@ -255,13 +150,13 @@ In wireless domain, used to define "soft" volume of signal contribution.
 Transition from optical real-valued alpha-blending to complex-valued coherent summation.
 
 #### Ray Definition
-From RX position l_RX along direction $\hat{v} = (\cos \alpha \cos \beta, \sin \alpha \cos \beta, \sin \beta)^T$:
+From RX position $l_{RX}$ along direction $\hat{v} = (\cos \alpha \cos \beta, \sin \alpha \cos \beta, \sin \beta)^T$:
 $$\gamma(d) = l_{RX} + d \hat{v}, \quad d \geq r_{RX}$$
 
-Where α is azimuth angle, β is elevation angle. Covers hemisphere (e.g., 360×90 rays, one-degree resolution).
+Where $\alpha$ is azimuth angle, $\beta$ is elevation angle. Covers hemisphere (e.g., $360\times90$ rays, one-degree resolution).
 
 #### Projection
-Project 3D Gaussians to 2D plane (orthographic or spherical). Projected Gaussian contribution G_proj,i remains real-valued, but overall contribution is complex:
+Project 3D Gaussians to 2D plane (orthographic or spherical). Projected Gaussian contribution $G_{proj,i}$ remains real-valued, but overall contribution is complex:
 ```
 Uᵢ = ψᵢ · G_proj,i · e^(j·2π·dᵢ/λ)
 ```
@@ -281,7 +176,7 @@ Where $w_i$ is weight (e.g., projection influence). Final power: $P_k = |h_k|^2$
 For antenna arrays, extend to spatial spectrum:
 $$P(\alpha,\beta) = \left|\frac{1}{K} \sum_{m,n} e^{j(\Delta\hat{\theta}_{m,n} - \Delta\theta_{m,n})}\right|^2$$
 
-Where $\Delta\theta_{m,n}$ is phase difference based on antenna spacing D and wavelength $\lambda$.
+Where $\Delta\theta_{m,n}$ is phase difference based on antenna spacing $D$ and wavelength $\lambda$.
 
 ### 4. Loss Function and Optimization
 
@@ -302,7 +197,7 @@ Parameters: $\lambda = 0.2$, SGD with learning rates like $\eta_\psi = 0.0025$. 
 - **Optical**: Real-valued summation → **Wireless**: Complex-valued summation capturing coherent interference
 
 #### Frequency/Wavelength Dependence
-- Embed f/λ into phase shifts and MLP inputs
+- Embed $f/\lambda$ into phase shifts and MLP inputs
 
 #### Sparse Data Handling
 - Add regularization to avoid optical dense data assumptions
