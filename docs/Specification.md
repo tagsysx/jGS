@@ -65,7 +65,7 @@ The transition from optical to RF domains necessitates fundamental changes due t
 
 This section presents the complete mathematical model for complex-valued 3D Gaussian Splatting (3DGS) adapted from the optical domain to the wireless signal domain (such as RF radiation field modeling).
 
-The key adaptation extends real-valued radiation fields from optics to complex-valued electromagnetic fields to capture both amplitude and phase, handling multipath propagation, interference, and coherent superposition. While optical 3DGS primarily deals with incoherent real-valued intensity, the wireless domain requires complex-valued representation to simulate electromagnetic wave phase shifts and attenuation.
+The key adaptation extends real-valued radiation fields from optics to complex-valued electromagnetic fields to capture both amplitude and phase, handling interference and coherent superposition. While optical 3DGS primarily deals with incoherent real-valued intensity, the wireless domain requires complex-valued representation to simulate electromagnetic wave phase shifts and attenuation.
 
 **Model Assumptions:**
 - Scene represented by $N$ 3D Gaussians, each representing a virtual scatterer or signal path contribution
@@ -77,15 +77,11 @@ The key adaptation extends real-valued radiation fields from optics to complex-v
 Each Gaussian $i$ (i=1 to $N$) is defined by the following parameters, with the key innovation being the introduction of complex values to handle the coherent nature of wireless signals:
 
 #### Position Mean $\mu_i \in \mathbb{R}^3$
-3D spatial position vector. Migrated from optical model, directly using original $\mu$, but with relaxed parameterization to capture multipath:
+3D spatial position vector representing the center of each Gaussian primitive:
 
-$$\mu_i = T_i \cdot P_{ref} + B_i$$
+$$\mu_i \in \mathbb{R}^3$$
 
-Where:
-- $T_i$ is selection matrix ($N \times R$, $R$ is number of reference points like TX positions)
-- $P_{ref}$ is reference positions
-- $B_i$ is bias term
-- $L_1$ regularization added to promote sparse paths
+Where $\mu_i$ represents the 3D coordinates $(x_i, y_i, z_i)$ of the $i$-th Gaussian primitive in the scene.
 
 #### Covariance Matrix $\Sigma_i \in \mathbb{R}^{3 \times 3}$
 Defines shape, size, and orientation, ensuring positive semi-definite:
@@ -95,7 +91,7 @@ $$\Sigma_i = R_i S_i S_i^T R_i^T$$
 Where:
 - $R_i$ is rotation matrix
 - $S_i$ is scaling matrix
-- Inherited from optics but initialization adjusted to reflect RF uncertainty (e.g., multipath spread)
+- Inherited from optics but initialization adjusted to reflect RF uncertainty
 - No direct complex values, but frequency dependence considered during projection
 
 #### Complex Radiance/Emission $\psi_i \in \mathbb{C}$
@@ -206,7 +202,7 @@ Parameters: $\lambda = 0.2$, SGD with learning rates like $\eta_\psi = 0.0025$. 
 - From camera view → RX hemisphere/array plane
 
 #### Initialization and Dynamic Adjustment
-- More splitting to capture multipath, thresholds like $\varepsilon_\rho = 0.004$
+- Dynamic adjustment through splitting/cloning/pruning, thresholds like $\varepsilon_\rho = 0.004$
 
 ### 6. Implementation Example
 
@@ -281,35 +277,35 @@ def create_rf_scene():
     """Create example RF scene with multiple scatterers."""
     gaussians = []
     
-    # Direct path
-    direct_gaussian = ComplexGaussianPrimitive(
+    # Primary scatterer
+    primary_gaussian = ComplexGaussianPrimitive(
         position=torch.tensor([0.0, 0.0, 0.0]),
-        complex_value=torch.tensor(1.0 + 0.0j),  # Strong direct signal
+        complex_value=torch.tensor(1.0 + 0.0j),  # Strong signal
         scale=torch.tensor([0.1, 0.1, 0.1]),
         rotation=torch.tensor([1.0, 0.0, 0.0, 0.0]),
         attenuation=torch.tensor(1.0 + 0.0j)  # No attenuation
     )
-    gaussians.append(direct_gaussian)
+    gaussians.append(primary_gaussian)
     
-    # Reflected path
-    reflected_gaussian = ComplexGaussianPrimitive(
+    # Secondary scatterer
+    secondary_gaussian = ComplexGaussianPrimitive(
         position=torch.tensor([1.0, 1.0, 0.0]),
-        complex_value=torch.tensor(0.7 + 0.0j),  # Weaker reflected signal
+        complex_value=torch.tensor(0.7 + 0.0j),  # Moderate signal
         scale=torch.tensor([0.2, 0.2, 0.1]),
         rotation=torch.tensor([1.0, 0.0, 0.0, 0.0]),
-        attenuation=torch.tensor(0.8 * torch.exp(1j * np.pi))  # 180° phase shift
+        attenuation=torch.tensor(0.8 + 0.0j)  # Slight attenuation
     )
-    gaussians.append(reflected_gaussian)
+    gaussians.append(secondary_gaussian)
     
-    # Scattered path through lossy medium
-    scattered_gaussian = ComplexGaussianPrimitive(
+    # Tertiary scatterer with phase shift
+    tertiary_gaussian = ComplexGaussianPrimitive(
         position=torch.tensor([-0.5, 0.5, 0.2]),
-        complex_value=torch.tensor(0.5 + 0.3j),  # Complex scattering
+        complex_value=torch.tensor(0.5 + 0.3j),  # Complex radiance
         scale=torch.tensor([0.3, 0.3, 0.2]),
         rotation=torch.tensor([1.0, 0.0, 0.0, 0.0]),
-        attenuation=torch.tensor(0.6 * torch.exp(1j * np.pi/4))  # Loss + phase shift
+        attenuation=torch.tensor(0.9 * torch.exp(1j * np.pi/6))  # Small phase shift
     )
-    gaussians.append(scattered_gaussian)
+    gaussians.append(tertiary_gaussian)
     
     return gaussians
 
@@ -328,7 +324,7 @@ print(f"Received power: {power:.6f}")
 print(f"Phase: {torch.angle(field):.3f} rad ({torch.angle(field)*180/np.pi:.1f}°)")
 ```
 
-This mathematical model enables accurate modeling of RF propagation phenomena including multipath, interference, and coherent superposition effects that are critical for wireless communication systems.
+This mathematical model enables accurate modeling of RF propagation phenomena including interference and coherent superposition effects that are critical for wireless communication systems.
 
 ## Complex-valued Fields
 
