@@ -1,6 +1,6 @@
-# Basic Concepts of Complex-valued Gaussian Splatting for RF
+# jGS Technical Specification
 
-This tutorial introduces the fundamental concepts behind jGS and how Gaussian Splatting is adapted for complex-valued RF signal processing.
+This document provides the complete technical specification for jGS (Complex-valued Gaussian Splatting for RF Signal Processing), including the mathematical model, implementation details, and theoretical foundations.
 
 ## Table of Contents
 1. [From Computer Graphics to RF](#from-computer-graphics-to-rf)
@@ -249,6 +249,301 @@ Where:
 - The product α * R gives the effective complex amplitude
 
 Where Σ is the covariance matrix derived from scale and rotation.
+
+## Complete Mathematical Model for Complex-Valued 3D Gaussian Splatting
+
+### Overview: From Optical to Wireless Signal Domain
+
+This section presents the complete mathematical model for complex-valued 3D Gaussian Splatting (3DGS) adapted from the optical domain to the wireless signal domain (such as RF radiation field modeling). This model is based on research including WRF-GS (Wireless Radiation Field with Gaussian Splatting), RFSPM (RF Signal Spatial Propagation Modeling), and GS3D (Gaussian Splatting-Synergized Stable Diffusion).
+
+The key adaptation extends real-valued radiation fields from optics to complex-valued electromagnetic fields to capture both amplitude and phase, handling multipath propagation, interference, and coherent superposition. While optical 3DGS primarily deals with incoherent real-valued intensity, the wireless domain requires complex-valued representation to simulate electromagnetic wave phase shifts and attenuation.
+
+**Model Assumptions:**
+- Scene represented by N 3D Gaussians, each representing a virtual scatterer or signal path contribution
+- Input: Transmitter (TX) position, Receiver (RX) position, wavelength λ, and frequency f (for wideband signals)
+- Output: Complex-valued field h at RX, or its power |h|² (such as RSSI or CSI)
+
+### 1. Gaussian Parameter Definitions
+
+Each Gaussian i (i=1 to N) is defined by the following parameters, with the key innovation being the introduction of complex values to handle the coherent nature of wireless signals:
+
+#### Position Mean μᵢ ∈ ℝ³
+3D spatial position vector. Migrated from optical model, directly using original μ, but with relaxed parameterization to capture multipath:
+
+```
+μᵢ = Tᵢ · P_ref + Bᵢ
+```
+
+Where:
+- Tᵢ is selection matrix (N × R, R is number of reference points like TX positions)
+- P_ref is reference positions
+- Bᵢ is bias term
+- L1 regularization added to promote sparse paths
+
+#### Covariance Matrix Σᵢ ∈ ℝ³ˣ³
+Defines shape, size, and orientation, ensuring positive semi-definite:
+
+```
+Σᵢ = Rᵢ Sᵢ SᵢᵀRᵢᵀ
+```
+
+Where:
+- Rᵢ is rotation matrix
+- Sᵢ is scaling matrix
+- Inherited from optics but initialization adjusted to reflect RF uncertainty (e.g., multipath spread)
+- No direct complex values, but frequency dependence considered during projection
+
+#### Complex Radiance/Emission ψᵢ ∈ ℂ
+Complex-valued signal strength, replacing optical real-valued color c:
+
+```
+ψᵢ = |ψᵢ| e^(j∠ψᵢ)
+```
+
+Where:
+- |ψᵢ| is amplitude
+- ∠ψᵢ is phase
+
+Modeled by small MLP:
+```
+ψᵢ = f_Θ(μᵢ, P_TX, v̂ᵢ, f)
+```
+
+Where:
+- v̂ᵢ is direction vector from Gaussian to RX
+- f is frequency (wideband embedding)
+- Migration from optics: original color as initial amplitude, random phase initialization [0, 2π]
+
+#### Complex Attenuation ρᵢ ∈ ℂ
+Complex-valued attenuation factor, replacing optical real-valued opacity α:
+
+```
+ρᵢ = |ρᵢ| e^(j∠ρᵢ)
+```
+
+Captures path attenuation and phase shift. Calculated by MLP:
+```
+ρᵢ = g_Φ(γ(‖μᵢ - P_TX‖), v̂ᵢ)
+```
+
+Where:
+- γ is positional encoding (e.g., Fourier features)
+- Cumulative attenuation considers depth ordering
+- Migration from optics: α as initial amplitude, adding random phase
+
+#### Additional RF-Specific Parameters
+
+**Phase Shift Term:** Introduces propagation phase shift e^(j·2π·dᵢ/λ), where dᵢ = ‖μᵢ - P_RX‖
+
+**Spherical Harmonics (Optional):** Extended to complex-valued SH to encode directional dependent radiation
+
+**Wideband Support:** Frequency embedding into MLP inputs
+
+**Initialization:** Gaussians generated from point clouds or optical models, with count N dynamically adjusted through splitting/cloning/pruning (e.g., gradient threshold ε_μ = 0.0002)
+
+### 2. Probability Density Function (PDF)
+
+3D Gaussian PDF:
+```
+P(x)ᵢ = exp(-½(x - μᵢ)ᵀΣᵢ⁻¹(x - μᵢ))
+```
+
+In wireless domain, used to define "soft" volume of signal contribution.
+
+### 3. Rendering/Splatting Process
+
+Transition from optical real-valued alpha-blending to complex-valued coherent summation.
+
+#### Ray Definition
+From RX position l_RX along direction v̂ = (cos α cos β, sin α cos β, sin β)ᵀ:
+```
+γ(d) = l_RX + d v̂, d ≥ r_RX
+```
+
+Where α is azimuth angle, β is elevation angle. Covers hemisphere (e.g., 360×90 rays, one-degree resolution).
+
+#### Projection
+Project 3D Gaussians to 2D plane (orthographic or spherical). Projected Gaussian contribution G_proj,i remains real-valued, but overall contribution is complex:
+```
+Uᵢ = ψᵢ · G_proj,i · e^(j·2π·dᵢ/λ)
+```
+
+#### Depth Sorting and Cumulative Attenuation
+Process Gaussians by depth (sorted from RX). Cumulative attenuation:
+```
+Sᵢ = (∏ⱼ₌₀ⁱ⁻¹ ρⱼ) ψᵢ
+```
+
+Where the product is complex-valued (amplitude attenuation + phase accumulation).
+
+#### Splatting/Superposition
+For angle k (or pixel), complex-valued field:
+```
+hₖ = Σᵢ₌₁ᴺ Sᵢ · wᵢ
+```
+
+Where wᵢ is weight (e.g., projection influence). Final power: Pₖ = |hₖ|²
+
+For antenna arrays, extend to spatial spectrum:
+```
+P(α,β) = |1/K Σₘ,ₙ e^(j(Δθ̂ₘ,ₙ - Δθₘ,ₙ))|²
+```
+
+Where Δθₘ,ₙ is phase difference based on antenna spacing D and wavelength λ.
+
+### 4. Loss Function and Optimization
+
+Training uses differentiable rasterizer with end-to-end optimization:
+
+```
+L = λL_power + (1-λ)L_phase + L_reg
+```
+
+Where:
+- **L_power = ‖|h_pred|² - P_gt‖₂²**: MSE on power
+- **L_phase = ‖∠h_pred - ∠h_gt‖₂²**: Phase loss (optional, if phase data available)
+- **L_reg**: L1 sparsity on paths + density control
+
+Parameters: λ = 0.2, SGD with learning rates like η_ψ = 0.0025. Noise robustness added (GS3D style).
+
+### 5. Key Adaptations from Optical to Wireless
+
+#### Complex Value Introduction
+- **Optical**: Real-valued summation → **Wireless**: Complex-valued summation capturing coherent interference
+
+#### Frequency/Wavelength Dependence
+- Embed f/λ into phase shifts and MLP inputs
+
+#### Sparse Data Handling
+- Add regularization to avoid optical dense data assumptions
+
+#### Rendering Plane
+- From camera view → RX hemisphere/array plane
+
+#### Initialization and Dynamic Adjustment
+- More splitting to capture multipath, thresholds like ε_ρ = 0.004
+
+### 6. Implementation Example
+
+```python
+import torch
+import numpy as np
+from jgs.core.primitives import ComplexGaussianPrimitive
+
+def complex_gaussian_splatting_rf(
+    gaussians: List[ComplexGaussianPrimitive],
+    rx_position: torch.Tensor,
+    tx_position: torch.Tensor,
+    frequency: float,
+    wavelength: float
+) -> torch.Tensor:
+    """
+    Complex-valued 3D Gaussian Splatting for RF field computation.
+    
+    Args:
+        gaussians: List of complex Gaussian primitives
+        rx_position: Receiver position (3,)
+        tx_position: Transmitter position (3,)
+        frequency: Signal frequency in Hz
+        wavelength: Signal wavelength in meters
+        
+    Returns:
+        Complex field value at receiver
+    """
+    total_field = torch.tensor(0.0 + 0.0j, dtype=torch.complex64)
+    
+    # Sort Gaussians by distance from RX for proper depth ordering
+    distances = [torch.norm(g.position - rx_position) for g in gaussians]
+    sorted_indices = torch.argsort(torch.tensor(distances))
+    
+    cumulative_attenuation = torch.tensor(1.0 + 0.0j, dtype=torch.complex64)
+    
+    for idx in sorted_indices:
+        gaussian = gaussians[idx]
+        
+        # Calculate propagation distance
+        distance = torch.norm(gaussian.position - rx_position)
+        
+        # Propagation phase shift
+        phase_shift = torch.exp(1j * 2 * np.pi * distance / wavelength)
+        
+        # Direction vector for directional effects
+        direction = (rx_position - gaussian.position) / distance
+        
+        # Gaussian spatial weight
+        diff = rx_position - gaussian.position
+        mahalanobis_sq = torch.sum(diff @ gaussian.inv_covariance * diff)
+        spatial_weight = torch.exp(-0.5 * mahalanobis_sq)
+        
+        # Complex contribution
+        contribution = (
+            cumulative_attenuation *
+            gaussian.attenuation *
+            gaussian.complex_value *
+            spatial_weight *
+            phase_shift
+        )
+        
+        total_field += contribution
+        
+        # Update cumulative attenuation for next Gaussian
+        cumulative_attenuation *= gaussian.attenuation
+    
+    return total_field
+
+# Example usage
+def create_rf_scene():
+    """Create example RF scene with multiple scatterers."""
+    gaussians = []
+    
+    # Direct path
+    direct_gaussian = ComplexGaussianPrimitive(
+        position=torch.tensor([0.0, 0.0, 0.0]),
+        complex_value=torch.tensor(1.0 + 0.0j),  # Strong direct signal
+        scale=torch.tensor([0.1, 0.1, 0.1]),
+        rotation=torch.tensor([1.0, 0.0, 0.0, 0.0]),
+        attenuation=torch.tensor(1.0 + 0.0j)  # No attenuation
+    )
+    gaussians.append(direct_gaussian)
+    
+    # Reflected path
+    reflected_gaussian = ComplexGaussianPrimitive(
+        position=torch.tensor([1.0, 1.0, 0.0]),
+        complex_value=torch.tensor(0.7 + 0.0j),  # Weaker reflected signal
+        scale=torch.tensor([0.2, 0.2, 0.1]),
+        rotation=torch.tensor([1.0, 0.0, 0.0, 0.0]),
+        attenuation=torch.tensor(0.8 * torch.exp(1j * np.pi))  # 180° phase shift
+    )
+    gaussians.append(reflected_gaussian)
+    
+    # Scattered path through lossy medium
+    scattered_gaussian = ComplexGaussianPrimitive(
+        position=torch.tensor([-0.5, 0.5, 0.2]),
+        complex_value=torch.tensor(0.5 + 0.3j),  # Complex scattering
+        scale=torch.tensor([0.3, 0.3, 0.2]),
+        rotation=torch.tensor([1.0, 0.0, 0.0, 0.0]),
+        attenuation=torch.tensor(0.6 * torch.exp(1j * np.pi/4))  # Loss + phase shift
+    )
+    gaussians.append(scattered_gaussian)
+    
+    return gaussians
+
+# Compute field
+gaussians = create_rf_scene()
+rx_pos = torch.tensor([2.0, 0.0, 0.0])
+tx_pos = torch.tensor([-1.0, 0.0, 0.0])
+freq = 2.4e9  # 2.4 GHz
+wavelength = 3e8 / freq
+
+field = complex_gaussian_splatting_rf(gaussians, rx_pos, tx_pos, freq, wavelength)
+power = torch.abs(field) ** 2
+
+print(f"Complex field: {field}")
+print(f"Received power: {power:.6f}")
+print(f"Phase: {torch.angle(field):.3f} rad ({torch.angle(field)*180/np.pi:.1f}°)")
+```
+
+This mathematical model enables accurate modeling of RF propagation phenomena including multipath, interference, and coherent superposition effects that are critical for wireless communication systems.
 
 ## Data Storage and Memory Management
 
@@ -686,4 +981,4 @@ Now that you understand the basic concepts:
 
 ---
 
-**Previous**: [Getting Started](getting_started.md) | **Next**: [Antenna Modeling](antenna_modeling.md)
+**Related**: [Getting Started](tutorials/getting_started.md) | [API Reference](api/) | [Examples](examples/)

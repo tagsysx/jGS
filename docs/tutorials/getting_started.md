@@ -201,4 +201,4 @@ pip install matplotlib plotly
 
 ---
 
-**Next Tutorial**: [Basic Concepts](basic_concepts.md) - Learn the theoretical foundations of jGS
+**Next Tutorial**: [Specification](../Specification.md) - Learn the complete mathematical model and theoretical foundations of jGS

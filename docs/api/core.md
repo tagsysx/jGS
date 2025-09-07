@@ -471,4 +471,4 @@ print(f"Grid shape: {field_grid.shape}")
 **See Also:**
 - [RF Module API](rf.md)
 - [Visualization Module API](visualization.md)
-- [Basic Concepts Tutorial](../tutorials/basic_concepts.md)
+- [Specification](../Specification.md)

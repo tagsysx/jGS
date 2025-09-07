@@ -16,7 +16,7 @@ Complete API documentation for all modules, classes, and functions in jGS.
 Step-by-step tutorials for learning jGS concepts and applications.
 
 - [Getting Started](tutorials/getting_started.md) - Installation and basic usage
-- [Basic Concepts](tutorials/basic_concepts.md) - Understanding Gaussian Splatting for RF
+- [Specification](Specification.md) - Complete mathematical model and theoretical foundations
 - [Antenna Modeling](tutorials/antenna_modeling.md) - Working with antenna patterns
 - [Field Reconstruction](tutorials/field_reconstruction.md) - Reconstructing RF fields from measurements
 - [Advanced Topics](tutorials/advanced_topics.md) - Optimization and custom implementations
@@ -33,7 +33,7 @@ Practical examples and use cases.
 
 ### For Beginners
 1. Start with [Getting Started](tutorials/getting_started.md)
-2. Read [Basic Concepts](tutorials/basic_concepts.md)
+2. Read [Specification](Specification.md)
 3. Try the [Basic Example](examples/basic_example.md)
 
 ### For Advanced Users
